@@ -283,7 +283,7 @@ CREATE TABLE " . self::$db_table_name . " (
   src1 varchar(1024) NOT NULL,
   src2 varchar(1024) NOT NULL,
   splash_attachment_id bigint(20) unsigned,
-  splash varchar(512) NOT NULL,
+  splash varchar(1024) NOT NULL,
   splash_text varchar(512) NOT NULL,
   title varchar(1024) NOT NULL,
   title_hide varchar(7) NOT NULL,
@@ -449,6 +449,14 @@ CREATE TABLE " . self::$db_table_name . " (
         if (!$multiID) {
           // fill-in our internal variables, as they have the same name as DB fields (ORM baby!)
           foreach ( $video_data as $key => $value ) {
+            // Do not set the caption if it's still in DB table.
+            if ( 'caption' === $key ) {
+              // Use it as the title if there is none.
+              if ( empty( $this->title ) ) {
+                $this->title = $value;
+              }
+              continue;
+            }
             $this->$key = FV_Player_Db::sanitize( $value );
           }
 
@@ -464,6 +472,14 @@ CREATE TABLE " . self::$db_table_name . " (
             if (!$first_done) {
               // fill-in our internal variables
               foreach ( $db_record as $key => $value ) {
+                // Do not set the caption if it's still in DB table.
+                if ( 'caption' === $key ) {
+                  // Use it as the title if there is none.
+                  if ( empty( $db_record->title ) ) {
+                    $db_record->title = $value;
+                  }
+                  continue;
+                }
                 $this->$key = FV_Player_Db::sanitize( $value );
               }
 

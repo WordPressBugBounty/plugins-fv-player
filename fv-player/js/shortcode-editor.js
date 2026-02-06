@@ -856,7 +856,7 @@ jQuery(function() {
           checkbox_toggle_worker(wrap, name, checked);
       });
 
-      $el_editor.on('change', '.components-text-control__input, .components-select-control__input', function() {
+      $el_editor.on('change input', '.components-text-control__input, .components-select-control__input', function() {
         var input = jQuery(this),
           parent = input.closest('.fv-player-editor-children-wrap'),
           name = input.attr('name').replace( /fv_wp_flowplayer_field_/, '' ),
@@ -1457,8 +1457,7 @@ jQuery(function() {
                 var json_export_data = jQuery('<div/>').text(JSON.stringify(what_is_saving)).html();
 
                 var overlay = overlay_show('error_saving');
-                overlay.find('textarea').val( $('<div/>').text(json_export_data).html() );
-                overlay.find('[data-error]').html( response.error );
+                overlay.find('textarea').val( response.error + '\n\nJSON data:\n\n' + $('<div/>').text(json_export_data).html() );
 
                 jQuery('#fv_player_copy_to_clipboard').select();
 
@@ -1545,6 +1544,8 @@ jQuery(function() {
 
                 if( v.title && ( !title_field.val() || auto_caption ) ) {
                   title_field.val( v.title );
+
+                  text_and_select_worker( title_field, title_field.closest('.fv-player-editor-children-wrap'), 'title', title_field.parents( '.fv-player-editor-field-wrap-title' ) );
                 }
 
                 if( auto_caption ) {
@@ -3447,8 +3448,7 @@ Please also contact FV Player support with the following debug information:\n\n\
               let json_export_data = jQuery('<div/>').text(JSON.stringify(ajax_data)).html();
 
               let overlay = overlay_show('error_saving');
-              overlay.find('textarea').val( $('<div/>').text(json_export_data).html() );
-              overlay.find('[data-error]').html( response.error );
+              overlay.find('textarea').val( response.error + '\n\nJSON data:\n\n' + $('<div/>').text(json_export_data).html() );
 
               jQuery('#fv_player_copy_to_clipboard').select();
 

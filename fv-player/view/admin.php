@@ -453,7 +453,7 @@ function fv_flowplayer_admin_autoplay_and_preloading() {
           ),
           'viewport' => array(
             'label' => __( 'Autoplay Video in Viewport', 'fv-player' ),
-            'description' => __( 'Video will autoplay when the player is visible on page load or when user scrolls down to it. It will pause when no longer in browser viewport.', 'fv-player' )
+            'description' => __( 'Video will autoplay when the player is visible on page load or when user scrolls down to it. It will pause when no longer in browser viewport. The next video will start preloading in the background.', 'fv-player' )
           ),
           'sticky' => array(
             'label' => __( 'Sticky Autoplay', 'fv-player' ),
@@ -466,7 +466,7 @@ function fv_flowplayer_admin_autoplay_and_preloading() {
           if( $value === $key || wp_json_encode($value) == $key ) { // use wp_json_encode as value can be boolean
             $radio_button .= ' checked="checked"';
           }
-          $radio_button .= '</input>';
+          $radio_button .= ' />';
           $radio_button .= '<label for="'.$id.'">'.$field['label'].'</label><br />';
 
           $radio_butons[] = $radio_button;
@@ -631,7 +631,7 @@ function fv_flowplayer_admin_integrations() {
 ?>
         <p><?php esc_html_e( 'Following options are suitable for web developers and programmers.', 'fv-player' ); ?></p>
         <table class="form-table2">
-
+          <?php $fv_fp->_get_checkbox(__( 'Debug', 'fv-player' ), 'debug_log', __( 'Print debug messages to browser console.', 'fv-player' ) ); ?>
           <?php $fv_fp->_get_checkbox(__( 'Disable database conversion', 'fv-player' ), 'disable_convert_db_save', __( 'Stop converting [fvplayer src="..."] shortcodes, [video] shortcodes, Vimeo and YouTube links to database-driven FV Player when post is saved.', 'fv-player' ) ); ?>
           <?php $fv_fp->_get_checkbox(__( 'Disable saving skin CSS to a static file', 'fv-player' ), 'css_disable', __( 'Normally the player CSS configuration is stored in wp-content/fv-flowplayer-custom/style-{blog_id}.css.', 'fv-player' ), __('We do this to avoid a big style tag in your site &lt;head&gt;. Don\'t edit this file though, as it will be overwritten by plugin update or saving its options!', 'fv-player' )); ?>
 
@@ -762,7 +762,7 @@ function fv_flowplayer_admin_seo() {
 
 function fv_flowplayer_admin_select_popups($aArgs){
 
-  $aPopupData = apply_filters('fv_player_admin_popups_defaults', get_option('fv_player_popups'));
+  $aPopupData = apply_filters( 'fv_player_admin_popups_defaults', get_option( 'fv_player_popups', array() ) );
 
 
   $sId = (isset($aArgs['id'])?$aArgs['id']:'popups_default');
@@ -1174,7 +1174,8 @@ function fv_flowplayer_admin_skin() {
 <style id="fv-style-preview"></style>
   <div class="flowplayer-wrapper">
     <?php
-    $fv_fp->admin_preview_player = flowplayer_content_handle( array(
+    global $fv_fp_admin_preview_player;
+    $fv_fp_admin_preview_player = flowplayer_content_handle( array(
       'src'       => 'https://player.vimeo.com/external/196881410.hd.mp4?s=24645ecff21ff60079fc5b7715a97c00f90c6a18&profile_id=174&oauth2_token_id=3501005',
       'splash'    => 'https://i.vimeocdn.com/video/609485450-6fc3febe7ce2c2fda919a99c27a9cb904c645dcb944bc53ac7f3a228685305d8-d?mw=1280&mh=720',
       'autoplay'  => 'false',
@@ -1187,12 +1188,12 @@ function fv_flowplayer_admin_skin() {
       'vast'      => 'skip',
       'checker'   => 'no'
       ) );
-    $fv_fp->admin_preview_player = explode( '<div class="fp-playlist-external', $fv_fp->admin_preview_player );
+    $fv_fp_admin_preview_player = explode( '<div class="fp-playlist-external', $fv_fp_admin_preview_player );
 
     // Video checker uses <noscript> and style="display: none" so we need to keep that
     add_filter( 'wp_kses_allowed_html', 'fv_flowplayer_admin_skin_safe_tags', 10, 2 );
     add_filter( 'safe_style_css', 'fv_flowplayer_admin_skin_safe_styles' );
-    echo wp_kses_post( $fv_fp->admin_preview_player[0] );
+    echo wp_kses_post( $fv_fp_admin_preview_player[0] );
     remove_filter( 'wp_kses_allowed_html', 'fv_flowplayer_admin_skin_safe_tags', 10, 2 );
     remove_filter( 'safe_style_css', 'fv_flowplayer_admin_skin_safe_styles' );
     ?>
@@ -1513,8 +1514,9 @@ function fv_flowplayer_admin_skin_playlist() {
 ?>
   <div class="flowplayer-wrapper">
     <?php
-    if( isset($fv_fp->admin_preview_player[1]) ) {
-			echo '<div class="fp-playlist-external'.str_replace( 'https://i.vimeocdn.com/video/609485450_1280.jpg', 'https://i.vimeocdn.com/video/608654918_295x166.jpg', $fv_fp->admin_preview_player[1] );
+    global $fv_fp_admin_preview_player;
+    if ( isset( $fv_fp_admin_preview_player[1] ) ) {
+			echo '<div class="fp-playlist-external'.str_replace( 'https://i.vimeocdn.com/video/609485450_1280.jpg', 'https://i.vimeocdn.com/video/608654918_295x166.jpg', $fv_fp_admin_preview_player[1] );
       esc_html_e( 'Hint: you can click the thumbnails to switch videos in the above player. This preview uses the horizontal playlist style.', 'fv-player' );
     }
     ?>

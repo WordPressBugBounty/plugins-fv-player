@@ -20,6 +20,9 @@ function fv_flowplayer_init_s3_uploader( options ) {
     upload_success_message = options.upload_success_message,
     upload_success_callback = options.upload_success_callback,
     upload_error_callback = ( typeof( options.upload_error_callback ) == 'function' ? options.upload_error_callback : function() {} );
+    min_duration = options.min_duration,
+    max_duration = options.max_duration,
+    vertical_only = options.vertical_only;
 
   function debug_log( ...args ) {
     console.log( 'FV Player S3 Uploader', ...args );
@@ -70,7 +73,54 @@ function fv_flowplayer_init_s3_uploader( options ) {
     $uploadButton.add( $cancelButton ).toggle();
     $progressDiv.text('');
 
-    s3upload = new S3MultiUpload( file );
+    /**
+     * Check video properties prior to video upload.
+     * This is not 100% reliable, but if the browser supports the video type,
+     * it will get proper duration, width and height. It even supports the video
+     * rotation using "displaymatrix: rotation of -90.00 degrees" as reported by
+     * ffprobe. 
+     */
+
+    // Create a temporary URL for the file
+    const videoUrl = URL.createObjectURL(file);
+
+    // Create a video element
+    const video = document.createElement('video');
+    video.src = videoUrl;
+
+    // Wait for metadata to load
+    video.addEventListener('loadedmetadata', () => {
+      URL.revokeObjectURL(videoUrl);
+
+      if ( video.duration ) {
+        if ( min_duration && min_duration.value && video.duration < min_duration.value ) {
+          s3upload.onValidationError( min_duration.msg );
+          return;
+        } else if ( max_duration && max_duration.value && video.duration > max_duration.value ) {
+          s3upload.onValidationError( max_duration.msg );
+          return;
+        }
+      }
+
+      if ( video.videoWidth && video.videoHeight ) {
+        if ( vertical_only && vertical_only.value && video.videoWidth > video.videoHeight ) {
+          s3upload.onValidationError( vertical_only.msg );
+          return;
+        }
+      }
+
+      upload_start_callback();
+      s3upload.start();
+    });
+
+    video.addEventListener('error', () => {
+      URL.revokeObjectURL(videoUrl);
+
+      upload_start_callback();
+      s3upload.start();
+    });
+
+    s3upload = new S3MultiUpload( file, options );
     s3upload.onServerError = function(command, jqXHR, textStatus, errorThrown) {
       set_upload_status(false);
       window.removeEventListener('beforeunload', closeWarning);
@@ -124,15 +174,24 @@ function fv_flowplayer_init_s3_uploader( options ) {
     s3upload.onValidationError = function( error ) {
       $uploadButton.add( $cancelButton ).toggle();
       recreate_file_input( file_select_input_name, file_select_input_class );
-      $progressDiv.text( error );
+
+      if ( options.error_container && options.error_container.length ) {
+        options.error_container.html( '<p>' + error + '</p>' ).show();
+        options.error_container.one( 'click', function() {
+          options.error_container.hide();
+        });
+
+        $progressDiv.text( '' );
+
+      } else {
+        $progressDiv.text( error );
+      }
+
       upload_error_callback();
       $progressBarDiv.hide();
     };
 
     $progressDiv.text("Preparing upload...");
-
-    upload_start_callback();
-    s3upload.start();
   }
 
   function getReadableFileSizeString(fileSizeInBytes) {

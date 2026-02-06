@@ -263,8 +263,14 @@ class FV_Player_S3_Upload {
       require( ABSPATH . WPINC . '/ID3/getid3.php' );
     }
     $getID3 = new getID3;
-    
-    // Analyze the uploaded file
+
+    /**
+     * Analyze the uploaded file.
+     *
+     * Note: This is not 100% reliable as not all the uploaded files will have moov meta data
+     * at the start of the file (in first 5MB). That's why we also run the check in browser,
+     * see s3-upload-base.js file where is runs document.createElement('video').
+     */
     $ThisFileInfo = $getID3->analyze($uploaded_file['tmp_name']);
     
     error_log('validate_file_upload: getID3 analysis: ' . print_r($ThisFileInfo, true));
@@ -332,33 +338,49 @@ class FV_Player_S3_Upload {
 
       if ( $minimal_width && $minimal_height ) {
 
-        // For 4:3 aspect ratio
-        $minimal_width_4_3 = $minimal_height * 4 / 3;
+        // TODO: Limit vertical videos to 9:16 with minimum width of 720px
+        // TODO: New error message: "Maximum vertical video aspect ratio is 9:16"
+        // TODO: New error message: "Maximum widescreen video aspect ratio is Cinemascope 2.55:1"
+
+        // For 1:3 aspect ratio
+        $minimal_width_4_3 = $minimal_height;
         $minimal_height_4_3 = $minimal_height;
 
-        // For 21:9 aspect ratio
+        // For 2.55:1 aspect ratio
         $minimal_width_21_9 = $minimal_width;
-        $minimal_height_21_9 = $minimal_width * 9 / 21;
+        $minimal_height_21_9 = $minimal_width * 1 / 2.55;
 
         $video_width    = absint( $ThisFileInfo['video']['resolution_x'] );
         $video_height   = absint( $ThisFileInfo['video']['resolution_y'] );
+        
+        $video_width_check = $video_width;
+        $video_height_check = $video_height;
+        $force_pass = false;
 
-        // Check for vertical video
+        // We need to flip the dimentions before checking aspect ratio for vertical videos
         // Alternatively we could parse degrees from $ThisFileInfo['video']['rotate'], but is that commonly used for vertical videos?
         if ( $video_width < $video_height ) {
-          $video_width  = absint( $ThisFileInfo['video']['resolution_y'] );
-          $video_height = absint( $ThisFileInfo['video']['resolution_x'] );
+
+          // If vertical video is 1080p or higher with a reasonable width, we accept it
+          if ( $video_height >= 1080 && $video_width >= 540 ) {
+            $force_pass = true;
+
+          } else {
+            $video_width_check  = intval( $ThisFileInfo['video']['resolution_y'] );
+            $video_height_check = intval( $ThisFileInfo['video']['resolution_x'] );
+          }
         }
 
         if (
-          $video_width >= $minimal_width && $video_height >= $minimal_height ||
-          $video_width >= $minimal_width_4_3 && $video_height >= $minimal_height_4_3 ||
-          $video_width >= $minimal_width_21_9 && $video_height >= $minimal_height_21_9
+          $force_pass ||
+          $video_width_check >= $minimal_width && $video_height_check >= $minimal_height ||
+          $video_width_check >= $minimal_width_4_3 && $video_height_check >= $minimal_height_4_3 ||
+          $video_width_check >= $minimal_width_21_9 && $video_height_check >= $minimal_height_21_9
         ) {
           // Video dimensions are good for one of the aspect ratios
 
         } else {
-          wp_send_json( array( 'error' => 'The video resolution is too low. Please create a ' . $minimal_video_resolution . ' video.' ) );
+          wp_send_json( array( 'error' => "I'm sorry, your video is only " . absint( $ThisFileInfo['video']['resolution_x'] ) . "x" . absint( $ThisFileInfo['video']['resolution_y'] ) . ". Please re-render it as " . $minimal_video_resolution . " or higher and upload again." ) );
           exit;
         }
 
@@ -403,10 +425,14 @@ class FV_Player_S3_Upload {
       'validated_file_info'         => $file_info,
       'detected_mime_type'          => $detected_mime_type,
       'file_analysis'               => array(
-        'fileformat'  => isset( $ThisFileInfo['fileformat'] ) ? $ThisFileInfo['fileformat'] : 'unknown',
-        'mime_type'   => $detected_mime_type,
-        'filesize'    => $file_size,
-        'resolution'  => $video_width . 'x' . $video_height,
+        'fileformat'   => isset( $ThisFileInfo['fileformat'] ) ? $ThisFileInfo['fileformat'] : 'unknown',
+        'mime_type'    => $detected_mime_type,
+        'filesize'     => $file_size,
+        'resolution'   => $video_width . 'x' . $video_height,
+        'height'       => $video_height,
+        'width'        => $video_width,
+        'duration'     => $ThisFileInfo['playtime_seconds'],
+        'duration_hms' => flowplayer::format_hms( $ThisFileInfo['playtime_seconds'] ),
       )
     ));
   }

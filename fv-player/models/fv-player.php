@@ -107,13 +107,14 @@ class flowplayer extends FV_Wordpress_Flowplayer_Plugin_Private {
     'top-right'    => "margin: 2% 2% auto auto",
   );
 
+  private $embed_id = false;
+
   private $help_html = array(
     'a'     => array( 'href' => array(), 'target' => array() ),
     'code'  => array(),
     'img'   => array( 'src' => array(), 'srcset' => array(), 'width' => array() ),
     'small' => array(),
   );
-
 
   public function __construct() {
     //load conf data into stack
@@ -159,8 +160,7 @@ class flowplayer extends FV_Wordpress_Flowplayer_Plugin_Private {
 
     add_action( 'template_redirect', array( $this, 'template_preview' ), 0 );
 
-    add_action( 'wp_head', array( $this, 'template_embed_buffer' ), PHP_INT_MAX);
-    add_action( 'wp_footer', array( $this, 'template_embed' ), 0 );
+    add_action( 'wp_head', array( $this, 'template_embed_buffer' ), PHP_INT_MAX );
 
     add_action( 'do_rocket_lazyload', array( $this, 'preview_no_lazy_load' ) );
 
@@ -802,6 +802,7 @@ class flowplayer extends FV_Wordpress_Flowplayer_Plugin_Private {
           'css_disable',
           'css_writeout',
           'customCSS',
+          'debug_log',
           'digitalocean_spaces',
           'disable_convert_db_save',
           'disable_localstorage',
@@ -1623,7 +1624,7 @@ class flowplayer extends FV_Wordpress_Flowplayer_Plugin_Private {
        *
        * We don't need it if playlists is in lightbox = using slider playlist style.
        */
-      if ( ! empty( $this->aCurArgs['liststyle'] ) && ! in_array( $this->aCurArgs['liststyle'], array( 'slider' ) ) ) {
+      if ( ! empty( $this->aCurArgs['liststyle'] ) && ! in_array( $this->aCurArgs['liststyle'], array( 'slider' ) ) && ! did_action( 'et_before_main_content' ) ) {
         $script_fit_thumbs = '';
         if( isset($aArgs['liststyle']) && in_array( $this->aCurArgs['liststyle'], array( 'polaroid', 'version-one', 'version-two' ) ) ) {
           $script_fit_thumbs = "
@@ -1735,7 +1736,8 @@ class flowplayer extends FV_Wordpress_Flowplayer_Plugin_Private {
     .wpfp_custom_background { display: none; position: absolute; background-position: center center; background-repeat: no-repeat; background-size: contain; width: 100%; height: 100%; z-index: 1 }
     .wpfp_custom_popup { position: absolute; top: 10%; z-index: 20; text-align: center; width: 100%; color: #fff; }
     .wpfp_custom_popup h1, .wpfp_custom_popup h2, .wpfp_custom_popup h3, .wpfp_custom_popup h4 { color: #fff; }
-    .is-finished .wpfp_custom_background { display: block; }
+    .is-finished .wpfp_custom_background { display: flex; align-items: center; justify-content: center; cursor: pointer }
+    .is-finished .wpfp_custom_background a { font-size: 3.2em; color: white }
 
     <?php echo esc_html( $this->_get_option('overlay_css') ); ?>
     .wpfp_custom_ad { color: <?php echo esc_html( $this->_get_option('overlayTextColor') ); ?>; z-index: 20 !important; }
@@ -2239,9 +2241,9 @@ class flowplayer extends FV_Wordpress_Flowplayer_Plugin_Private {
     $seconds = round( $seconds );
 
     if( $seconds < 3600 ) {
-      return gmdate( "i:s", $seconds );
+      return gmdate( "i:s", round( $seconds ) );
     } else {
-      return gmdate( "H:i:s", $seconds );
+      return gmdate( "H:i:s", round( $seconds ) );
     }
   }
 
@@ -2963,7 +2965,9 @@ class flowplayer extends FV_Wordpress_Flowplayer_Plugin_Private {
   }
 
   function template_embed_buffer(){
-    if( get_query_var('fv_player_embed') ) {
+    if ( get_query_var('fv_player_embed') ) {
+      $this->embed_id = get_query_var('fv_player_embed');
+
       ob_start();
 
       global $fvseo;
@@ -2974,12 +2978,14 @@ class flowplayer extends FV_Wordpress_Flowplayer_Plugin_Private {
         global $objTracker;
         if( isset($objTracker) ) remove_action( 'wp_footer', array( $objTracker, 'OutputFooter' ) );
       }
+
+      add_action( 'wp_footer', array( $this, 'template_embed' ), 0 );
     }
   }
 
   function template_embed() {
     // Generate embed html
-    if( $embed_id = get_query_var('fv_player_embed') ) {
+    if ( $this->embed_id ) {
       $content = ob_get_contents();
       ob_clean();
 
@@ -3002,9 +3008,9 @@ class flowplayer extends FV_Wordpress_Flowplayer_Plugin_Private {
       $bFound = false;
       $rewrite = get_option('rewrite_rules');
       if( empty($rewrite) ) {
-        $sLink = 'fv_player_embed='.$embed_id;
+        $sLink = 'fv_player_embed=' . $this->embed_id;
       } else {
-        $sPostfix = $embed_id == 1 ? 'fvp' : 'fvp'.$embed_id;
+        $sPostfix = $this->embed_id == 1 ? 'fvp' : 'fvp' . $this->embed_id;
         $sLink = user_trailingslashit( trailingslashit( get_permalink() ).$sPostfix );
       }
 
@@ -3019,8 +3025,8 @@ class flowplayer extends FV_Wordpress_Flowplayer_Plugin_Private {
         }
       }
 
-      if( !$bFound && is_numeric($embed_id) && !empty($aPlayers[$embed_id-1]) ) {
-        echo substr($aPlayers[$embed_id-1], stripos($aPlayers[$embed_id-1],'<div id="wpfp_') );
+      if ( ! $bFound && is_numeric( $this->embed_id ) && !empty( $aPlayers[ $this->embed_id - 1 ] ) ) {
+        echo substr( $aPlayers[ $this->embed_id - 1 ], stripos($aPlayers[ $this->embed_id - 1 ], '<div id="wpfp_' ) );
         $bFound = true;
       }
 

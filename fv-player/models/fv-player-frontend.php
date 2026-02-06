@@ -386,7 +386,7 @@ class flowplayer_frontend extends flowplayer
      */
     $sticky = null;  //  todo: should be changed into a property
 
-    if( $this->_get_option('autoplay_preload') == 'sticky' && $this->aCurArgs['sticky'] != 'false'  ) {
+    if( $this->_get_option('autoplay_preload') == 'sticky' && ( empty( $this->aCurArgs['sticky'] ) || $this->aCurArgs['sticky'] != 'false' ) ) {
       $sticky = true;
     }
 
@@ -394,7 +394,7 @@ class flowplayer_frontend extends flowplayer
       $sticky = true;
     }
 
-    if ( 'off' !== $this->_get_option('sticky_video') && 'false' === $this->aCurArgs['sticky'] ) {
+    if ( 'off' !== $this->_get_option('sticky_video') && ! empty( $this->aCurArgs['sticky'] ) && 'false' === $this->aCurArgs['sticky'] ) {
       $sticky = false;
     }
 
@@ -495,7 +495,7 @@ class flowplayer_frontend extends flowplayer
           // compatibility fallback for classic (non-DB) shortcode
           (isset($this->aCurArgs['splashend']) && $this->aCurArgs['splashend'] == 'show' && isset($this->aCurArgs['splash']) && !empty($this->aCurArgs['splash']))
         ) {
-          $splashend_contents = '<div id="wpfp_'.$this->hash.'_custom_background" class="wpfp_custom_background" style="background-image: url(\''.$splash_img.'\')"></div>';
+          $splashend_contents = '<div id="wpfp_'.$this->hash.'_custom_background" class="wpfp_custom_background" style="background-image: url(\''.$splash_img.'\')"><a class="fp-icon fp-playbtn"></a></div>';
         }
 
         // should the player appear as audio player?
@@ -969,7 +969,7 @@ class flowplayer_frontend extends flowplayer
     }
 
 
-    if( isset($this->aCurArgs['liststyle']) && in_array($this->aCurArgs['liststyle'], array('vertical','text') ) && count($aPlaylistItems) > 1 ){
+    if( isset($this->aCurArgs['liststyle']) && in_array($this->aCurArgs['liststyle'], array('vertical','text') ) && count($aPlaylistItems) > 1 && ! did_action( 'et_before_main_content' ) ) {
       $this->ret['html'] = '<div class="fp-playlist-'.$this->aCurArgs['liststyle'].'-wrapper">'.$this->ret['html'].'</div>';
 
       // These script need to run right away to ensure nothing moves during the page loading

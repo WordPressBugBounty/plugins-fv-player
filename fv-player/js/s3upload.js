@@ -1,4 +1,4 @@
-function S3MultiUpload(file) {
+function S3MultiUpload( file, options ) {
     let ajaxurl = false;
     if ( window.fv_flowplayer_browser ) {
       ajaxurl = window.fv_flowplayer_browser.ajaxurl;
@@ -45,6 +45,13 @@ function S3MultiUpload(file) {
     this.multiupload_send_part_nonce = null;
     this.multiupload_abort_nonce = null;
     this.multiupload_complete_nonce = null;
+
+    this.min_duration = options.min_duration;
+    this.min_duration_msg = options.min_duration_msg;
+    this.max_duration = options.max_duration;
+    this.max_duration_msg = options.max_duration_msg;
+    this.vertical_only = options.vertical_only;
+    this.vertical_only_msg = options.vertical_only_msg;
 }
 
 /**
@@ -80,7 +87,7 @@ S3MultiUpload.prototype.sanitizeFilename = function(filename) {
  */
 S3MultiUpload.prototype.validateFile = function() {
     var self = this;
-    
+
     // Create a blob with the first 1MB of the file
     var validationBlob = this.file.slice(0, this.validationChunkSize);
     
@@ -108,6 +115,31 @@ S3MultiUpload.prototype.validateFile = function() {
             return xhr;
         }
     }).done(function(data) {
+        if ( data.file_analysis ) {
+            
+            if ( data.file_analysis.duration ) {
+                if ( self.min_duration && self.min_duration.value && data.file_analysis.duration < self.min_duration.value ) {
+                    self.onValidationError( self.min_duration.msg );
+                    return;
+                } else if ( self.max_duration && self.max_duration.value && data.file_analysis.duration > self.max_duration.value ) {
+                    self.onValidationError( self.max_duration.msg );
+                    return;
+                }
+
+                // Set the Betube video submission field
+                jQuery( 'body.wp-theme-betube [name=post_time]' ).val( data.file_analysis.duration );
+            }
+            if ( data.file_analysis.height ) {
+
+                // Set the Betube video submission field
+                jQuery( 'body.wp-theme-betube [name=post_quality]' ).val( data.file_analysis.height + 'p' );
+
+                if ( self.vertical_only && self.vertical_only.value && data.file_analysis.width > data.file_analysis.height ) {
+                    self.onValidationError( self.vertical_only.msg );
+                    return;
+                }
+            }
+        }
 
         if (data.error) {
             self.onValidationError(data.error);
@@ -122,8 +154,46 @@ S3MultiUpload.prototype.validateFile = function() {
             self.onValidationSuccess(data);
             self.createMultipartUpload();
         }
-    }).fail(function(jqXHR, textStatus, errorThrown) {
-        self.onValidationError('Validation request failed: ' + textStatus);
+    }).fail( function(jqXHR, textStatus, errorThrown) {
+        // Try to extract as much info as possible from the jqXHR object
+        var errorMsg = 'Validation request failed: ' + textStatus;
+
+        // Check for HTTP status
+        if (jqXHR.status) {
+            errorMsg += ' (HTTP ' + jqXHR.status + ')';
+        }
+
+        // Try to extract server response text
+        if (jqXHR.responseText) {
+            // Try to parse as JSON for any structured error message
+            try {
+                var responseJson = JSON.parse(jqXHR.responseText);
+                if (responseJson.error) {
+                    errorMsg += ' - ' + responseJson.error;
+                } else if (responseJson.message) {
+                    errorMsg += ' - ' + responseJson.message;
+                } else {
+                    errorMsg += ' - ' + jqXHR.responseText;
+                }
+            } catch (e) {
+                // Not JSON, but check if there's HTML—strip tags before appending the response
+                var rawResponse = jqXHR.responseText;
+                if (typeof rawResponse === "string") {
+                    // Create a temporary DOM element and extract text content to strip HTML tags
+                    var tempDiv = document.createElement('div');
+                    tempDiv.innerHTML = rawResponse;
+                    rawResponse = tempDiv.textContent || tempDiv.innerText || "";
+                }
+                errorMsg += ' - ' + rawResponse;
+            }
+        }
+
+        // If there's an explicit error passed by jQuery as errorThrown, add it too
+        if (errorThrown) {
+            errorMsg += ' (' + errorThrown + ')';
+        }
+
+        self.onValidationError(errorMsg);
     });
 };
 
@@ -411,10 +481,3 @@ S3MultiUpload.prototype.onValidationProgress = function(percentComplete) {};
  * @param {object} data Response data from validation server
  */
 S3MultiUpload.prototype.onValidationSuccess = function(data) {};
-
-/**
- * Override this method to handle file validation errors
- *
- * @param {string} error Error message from validation
- */
-S3MultiUpload.prototype.onValidationError = function(error) { alert(error); };
