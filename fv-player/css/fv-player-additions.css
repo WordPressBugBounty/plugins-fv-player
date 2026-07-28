@@ -920,6 +920,8 @@ iframe#youtube.fp-engine {
 .flowplayer.is-youtube-nl .fp-engine {
   top: -42% !important;
   height: 184% !important;
+  max-width: var(--fv-player-video-aspect-ratio-width);
+  margin: 0 auto;
 }
 .flowplayer.is-youtube-nl.is-small .fp-engine {
   top: -55% !important;
