@@ -31,7 +31,7 @@ function fv_player_shortcode_editor_scripts_enqueue( $extra_args = array() ) {
   $fv_player_editor_conf = array(
     'admin_url' => admin_url('admin.php?page=fv_player'),
     'home_url' => home_url('/'),
-    'db_import_nonce' => wp_create_nonce( "fv-player-db-import" ),
+    'db_import_nonce' => current_user_can( 'edit_others_posts' ) ? wp_create_nonce( "fv-player-db-import" ) : null,
     'db_load_nonce' => wp_create_nonce( "fv-player-db-load" ),
     'edit_nonce' => wp_create_nonce( "fv-player-edit" ),
     'edit_posts_cell_nonce' => wp_create_nonce( "fv-player-edit_posts_cell_nonce" ),
@@ -477,7 +477,21 @@ function fv_player_splashcreen_action() {
     return urldecode($title);
   }
 
-  if( check_ajax_referer( "fv-player-splashscreen", "security" , false ) == 1 ) {
+  global $wp_filesystem;
+
+  if( check_ajax_referer( "fv-player-splashscreen", "security" , false ) !== 1 ) {
+    $jsonReturn = array(
+      'src'     =>  '',
+      'error'   =>  'Nonce error - please reload your page'
+    );
+
+  } else if ( $wp_filesystem->method !== 'direct' ) {
+    $jsonReturn = array(
+      'src'     =>  '',
+      'error'   =>  'Filesystem error - please contact your host administrator'
+    );
+
+  } else {
     $title = sanitize_text_field( $_POST['title'] );
     $img = sanitize_text_field( $_POST['img'] );
     $limit = 128 - 5; // .jpeg
@@ -503,7 +517,6 @@ function fv_player_splashcreen_action() {
 
     // $hashed_filename = md5( $filename . microtime() ) . '_' . $filename;
 
-    global $wp_filesystem;
     $wp_filesystem->put_contents( $upload_path . $filename, $decoded );
 
     // Handle upload file
@@ -563,11 +576,6 @@ function fv_player_splashcreen_action() {
         );
       }
     }
-  } else {
-    $jsonReturn = array(
-      'src'     =>  '',
-      'error'   =>  'Nonce error - please reload your page'
-    );
   }
 
   header('Content-Type: application/json');

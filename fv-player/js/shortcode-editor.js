@@ -1739,7 +1739,7 @@ jQuery(function() {
       $doc.on('click','.fv-player-editor-remove', function() {console.log('.fv-player-editor-remove');
         var wrapper = $(this).parents('.fv-player-editor-wrapper');
         if( $('[data-key='+wrapper.data('key')+']').length == 1 ) { //  if there is only single video
-          wrapper.find('.fv-player-editor-field').val('');
+          wrapper.find('.fv-player-editor-field').val('').trigger('change');
           fv_show_video(wrapper);
         } else {
           wrapper.remove();
@@ -3652,7 +3652,7 @@ Please also contact FV Player support with the following debug information:\n\n\
 
       // is there a plain text field together in wrapper with the button?
       } else if (field.length) {
-        field.val(shortcode);
+        field.val(shortcode).trigger('change');
         // Prevents double event triggering in FV Player Custom Video box
         //field.trigger('fv_flowplayer_shortcode_insert', [shortcode]);
 
@@ -4667,13 +4667,11 @@ Please also contact FV Player support with the following debug information:\n\n\
           });
 
         } else {
-          // TODO: Fix, it won't show!
           fv_player_editor.overlay_notice( button, response, 'error' );
 
         }
       }).fail(function() {
         fv_player_editor.overlay_notice( button, 'Unknown error!', 'error' );
-
       });
 
       return false;
@@ -5187,6 +5185,8 @@ Please also contact FV Player support with the following debug information:\n\n\
           .removeClass('notice-success')
           .addClass('notice-'+type)
           .css('visibility', 'visible');
+
+        overlay.show();
 
         if( close_after ) {
           setTimeout(function() {
