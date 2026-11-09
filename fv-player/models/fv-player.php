@@ -1368,6 +1368,15 @@ class flowplayer extends FV_Wordpress_Flowplayer_Plugin_Private {
     } else {
       if( $sItemCaption ) $sItemCaption = "<span>".$sItemCaption."</span>";
 
+      if ( $this->current_video() && $this->current_video()->getMetaData() ) {
+        foreach ( $this->current_video()->getMetaData() as $meta_object) {
+          if (strpos($meta_object->getMetaKey(), 'subtitles') !== false) {
+            $language = str_replace( 'subtitles_', '', $meta_object->getMetaKey() );
+            $sItemCaption .= '<i class="sub">' . strtoupper($language) . '</i>';
+          }
+        }
+      }
+
       if( $tDuration ) {
         $sDuration = '<i class="dur">'.flowplayer::format_hms($tDuration).'</i>';
         if( !empty($this->aCurArgs['listdesign']) && $this->aCurArgs['listdesign'] == '2014' || empty($this->aCurArgs['listdesign']) && $this->_get_option('playlist-design') == 2014 ) {
@@ -3107,7 +3116,7 @@ class flowplayer extends FV_Wordpress_Flowplayer_Plugin_Private {
     return $public_query_vars;
   }
 
-  function template_embed_buffer(){
+  function template_embed_buffer() {
     if ( get_query_var('fv_player_embed') ) {
       $this->embed_id = get_query_var('fv_player_embed');
 
@@ -3144,7 +3153,7 @@ class flowplayer extends FV_Wordpress_Flowplayer_Plugin_Private {
     html {margin-top: 0px !important; overflow:hidden; }
   </style>
 </head>
-<body class="fv-player-preview">
+<body class="fv-player-preview fv-player-embed">
   <?php
     if( stripos($content,'<!--fv player end-->') !== false ) {
 
@@ -3158,8 +3167,12 @@ class flowplayer extends FV_Wordpress_Flowplayer_Plugin_Private {
       }
 
       $aPlayers = explode( '<!--fv player end-->', $content );
+
+      // Match the players by the player ID.
       if( $aPlayers ) {
         foreach( $aPlayers AS $k => $v ) {
+
+          // Look for player with the matching embed link
           if( stripos($v,$sLink.'"') !== false ) {
             echo substr($v, stripos($v,'<div id="wpfp_') );
             $bFound = true;
@@ -3168,12 +3181,16 @@ class flowplayer extends FV_Wordpress_Flowplayer_Plugin_Private {
         }
       }
 
-      if ( ! $bFound && is_numeric( $this->embed_id ) && !empty( $aPlayers[ $this->embed_id - 1 ] ) ) {
+      /**
+       * If no player was found by the player ID, just show the player by the number of the player on page,
+       * which is the old behavior before player IDs were introduced.
+       */
+      if ( ! $bFound && is_numeric( $this->embed_id ) && ! empty( $aPlayers[ $this->embed_id - 1 ] ) ) {
         echo substr( $aPlayers[ $this->embed_id - 1 ], stripos($aPlayers[ $this->embed_id - 1 ], '<div id="wpfp_' ) );
         $bFound = true;
       }
 
-      if( !$bFound ) {
+      if ( ! $bFound ) {
         echo "<p>Player not found, see the full article: <a href='".get_permalink()."' target='_blank'>".get_the_title()."</a>.</p>";
       }
 
@@ -3417,6 +3434,11 @@ class flowplayer extends FV_Wordpress_Flowplayer_Plugin_Private {
   }
 }
 
+/**
+ * Run video duration checks on players using the legacy shortcode like:
+ *
+ * [fvplayer src="..."]
+ */
 function fv_wp_flowplayer_save_post( $post_id ) {
   if( $parent_id = wp_is_post_revision($post_id) ) {
     $post_id = $parent_id;

@@ -470,7 +470,24 @@ class flowplayer_frontend extends flowplayer
           // compatibility fallback for classic (non-DB) shortcode
           (isset($this->aCurArgs['splashend']) && $this->aCurArgs['splashend'] == 'show' && isset($this->aCurArgs['splash']) && !empty($this->aCurArgs['splash']))
         ) {
-          $splashend_contents = '<div id="wpfp_'.$this->hash.'_custom_background" class="wpfp_custom_background" style="background-image: url(\''.$splash_img.'\')"><a class="fp-icon fp-playbtn"></a></div>';
+          /**
+           * The splash value is only run through wp_strip_all_tags() on save, which keeps quotes,
+           * so it could potentially break out of the style attribute. esc_url() avoids that.
+           */
+          $splash_url   = esc_url( $splash_img );
+
+          /**
+           * But esc_url() leaves the single-quote as the &#039; entity, which the HTML parser decodes
+           * back to ' before the CSS parser sees it - still enough to close url('...') and inject CSS.
+           *
+           * So we encode &#039; to %27 so the whole value stays part of the URL (this also preserves
+           * legitimate filenames that contain a quote, which %27 resolves back to).           
+           */
+          $splash_url   = str_replace( '&#039;', '%27', $splash_url );
+          $splash_style = 'background-image: url(\'' . $splash_url . '\')';
+
+          // esc_attr() on the finished style value is a final guard so nothing can escape the attribute.
+          $splashend_contents = '<div id="wpfp_'.$this->hash.'_custom_background" class="wpfp_custom_background" style="' . esc_attr( $splash_style ) . '"><a class="fp-icon fp-playbtn"></a></div>';
         }
 
         // should the player appear as audio player?
@@ -715,7 +732,8 @@ class flowplayer_frontend extends flowplayer
         }
 
         if( isset($this->aCurArgs['admin_warning']) ) {
-          $this->sHTMLAfter .= wpautop($this->aCurArgs['admin_warning']);
+          // Untrusted shortcode attribute, see the error message below.
+          $this->sHTMLAfter .= wpautop( wp_kses_post( $this->aCurArgs['admin_warning'] ) );
         }
 
         if( isset($this->aCurArgs['playlist_start']) ) {
@@ -852,7 +870,9 @@ class flowplayer_frontend extends flowplayer
         }
 
         if( !empty($fv_fp->aCurArgs['error']) ) {
-          $this->ret['html'] .= "\t".'<div class="fp-ui"><div class="fp-message fp-shown">'.$fv_fp->aCurArgs['error'].'</div>'.$this->get_play_button().$preload.'</div>'."\n";
+          // The error message may come from the shortcode attribute, so it is untrusted input.
+          // Shortcode attributes are decoded with stripcslashes() so \x3c...\x3e turns into HTML.
+          $this->ret['html'] .= "\t".'<div class="fp-ui"><div class="fp-message fp-shown">'.wp_kses_post( $fv_fp->aCurArgs['error'] ).'</div>'.$this->get_play_button().$preload.'</div>'."\n";
 
         } else {
           $fp_ui_style = !wp_style_is('fv_flowplayer') && !defined('PHPUnitTestMode') ? ' style="position:absolute"' : '';
@@ -974,6 +994,7 @@ class flowplayer_frontend extends flowplayer
 
   if ( el.offsetHeight && el.offsetWidth <= 560 ) {
     el.classList.add('is-fv-narrow');
+    height = player.offsetHeight;
   }
 
   if ( el.classList.contains('is-vertical') ) {
@@ -1376,7 +1397,7 @@ class flowplayer_frontend extends flowplayer
     $output->ret['html'] .= '<ul>';
     foreach( $aPlaylistItems AS $key => $aSrc ) {
       $sCaption = !empty($aCaptions[$key]) ? $aCaptions[$key] : $key;
-      $output->ret['html'] .= '<li><a href="#tabs-'.$post->ID.'-'.$this->count_tabs.'-'.$key.'">'.$sCaption.'</a></li>';
+      $output->ret['html'] .= '<li><a href="#tabs-'.$post->ID.'-'.$this->count_tabs.'-'.$key.'">'.flowplayer::filter_possible_html( $sCaption ).'</a></li>';
     }
     $output->ret['html'] .= '</ul><div class="fv_flowplayer_tabs_cl"></div>';
 

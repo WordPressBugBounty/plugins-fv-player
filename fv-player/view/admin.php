@@ -747,16 +747,17 @@ function fv_flowplayer_admin_privacy() {
 function fv_flowplayer_admin_seo() {
   global $fv_fp;
 ?>
-        <table class="form-table2">
-          <?php $fv_fp->_get_checkbox(__( 'Use Schema.org markup', 'fv-player' ), array( 'integrations', 'schema_org' ), __( ' Adds the video meta data information for search engines.', 'fv-player' ) ); ?>
-          <?php do_action( 'fv_flowplayer_admin_seo_after'); ?>
-          <tr>
-            <td colspan="4">
-              <a class="fv-wordpress-flowplayer-save button button-primary" href="#"><?php esc_html_e( 'Save', 'fv-player' ); ?></a>
-              <a class="button fv-help-link" href="https://foliovision.com/player/settings/video-seo-schema-xml" target="_blank">Help</a>
-              </td>
-          </tr>
-        </table>
+  <table class="form-table2">
+    <?php $fv_fp->_get_checkbox(__( 'Use Open Graph and X Cards', 'fv-player' ), array( 'integrations', 'open_graph' ), __( 'Accepts MP4 videos with no URL signature. Takes priority over FV Simpler SEO, Rank Math and SEOPress tags. Will store an image with play icon and store it in Media Library.', 'fv-player' ), __( 'The new images are created when a video or a post with a video is saved. These images are added to the Media Library and stored in the <code>fv-player-video-sharing</code> folder in WordPress uploads.', 'fv-player' ) ); ?>
+    <?php $fv_fp->_get_checkbox(__( 'Use Schema.org markup', 'fv-player' ), array( 'integrations', 'schema_org' ), __( 'Adds the video meta data information for search engines.', 'fv-player' ) ); ?>
+    <?php do_action( 'fv_flowplayer_admin_seo_after'); ?>
+    <tr>
+      <td colspan="4">
+        <a class="fv-wordpress-flowplayer-save button button-primary" href="#"><?php esc_html_e( 'Save', 'fv-player' ); ?></a>
+        <a class="button fv-help-link" href="https://foliovision.com/player/settings/video-seo-schema-xml" target="_blank">Help</a>
+        </td>
+    </tr>
+  </table>
 <?php
 }
 
@@ -2284,21 +2285,6 @@ add_meta_box( 'fv_flowplayer_usage', __( 'Usage', 'fv-player' ), 'fv_flowplayer_
 
 </div>
 <script type="text/javascript" >
-  function flowplayer_conversion_script() {
-    jQuery('#fv-flowplayer-loader').show();
-
-  	var data = {
-  		action: 'flowplayer_conversion_script',
-  		run: true
-  	};
-
-  	jQuery.post(ajaxurl, data, function(response) {
-      jQuery('#fv-flowplayer-loader').hide();
-      jQuery('#conversion-results').html(response);
-      jQuery('#fvwpflowplayer_conversion_notice').hide();
-  	});
-  }
-
   function fv_flowplayer_ajax_check( type, nonce ) {
     jQuery('.'+type+'-spin').show();
     var ajaxurl = '<?php echo esc_attr( site_url() ); ?>/wp-admin/admin-ajax.php';

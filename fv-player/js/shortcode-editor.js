@@ -34,6 +34,9 @@ jQuery(function() {
     deleted_video_meta = [],
     deleted_player_meta = [],
 
+    // The playlist items which build_ajax_data() saved as data.videos, keyed by the data object
+    ajax_data_video_items = new WeakMap(),
+
     prevent_reload_for_current_save = false,
 
     // stores the button which was clicked to open the editor
@@ -115,7 +118,15 @@ jQuery(function() {
     //     as to not overload the user and UI with errors. Once that error is corrected, it gets removed from this object and next one (if any) is shown.
     errors = {},
 
-    store_debug_log = [];
+    store_debug_log = [],
+
+    // details of the last fv_player_db_save or fv_player_db_load Ajax request, used by the Copy debug info button
+    debug_last_request = false,
+
+    // shows the Copy debug info notice if the Ajax request does not finish in time
+    debug_request_timer = false,
+
+    debug_request_timeout = 10000;
 
     debug_log('Loading...');
 
@@ -1002,45 +1013,49 @@ jQuery(function() {
       $doc.on('click','.fv-player-tab-playlist .fv-player-editor-playlist-item .fvp_item_remove', function(e) {
         e.stopPropagation();
 
-        if( !confirm('Would you like to remove this video?') ) {
-          return false;
-        }
+        foliopress_confirm(
+          'Would you like to remove this video?',
+          function() {
+            var
+              playlist_row = $(e.target).parents('[data-index]'),
+              index = playlist_row.attr('data-index'),
+              id = get_tab(index,'video-files').attr('data-id_video');
 
-        var
-          playlist_row = $(e.target).parents('[data-index]'),
-          index = playlist_row.attr('data-index'),
-          id = get_tab(index,'video-files').attr('data-id_video');
+            // A new video has no ID until its save finishes, the save response handler deletes it then
+            if( id ) {
+              deleted_videos.push(id);
+            }
 
-        deleted_videos.push(id);
+            playlist_row.remove();
 
-        playlist_row.remove();
+            get_tab(index,'video-files').remove();
+            get_tab(index,'subtitles').remove();
+            get_tab(index,'cues').remove();
 
-        get_tab(index,'video-files').remove();
-        get_tab(index,'subtitles').remove();
-        get_tab(index,'cues').remove();
+            // Keep data-index in order
+            playlist_index();
 
-        // Keep data-index in order
-        playlist_index();
+            // if no playlist item is left, add a new one
+            // TODO: Some better way? Like do it after the data is saved
+            if( !jQuery('.fv-player-tab-subtitles [data-playlist-item][data-index]').length ){
 
-        // if no playlist item is left, add a new one
-        // TODO: Some better way? Like do it after the data is saved
-        if( !jQuery('.fv-player-tab-subtitles [data-playlist-item][data-index]').length ){
+              // Required, with this it actually saves the change!
+              playlist_item_add();
 
-          // Required, with this it actually saves the change!
-          playlist_item_add();
+              if( fv_player_editor_conf.frontend ) {
+                reset_preview();
+                playlist_show();
 
-          if( fv_player_editor_conf.frontend ) {
-            reset_preview();
-            playlist_show();
+              } else {
+                playlist_item_show(0);
+              }
+            }
 
-          } else {
-            playlist_item_show(0);
+            $doc.trigger('fv_player_editor_item_delete');
+
+            return false;
           }
-        }
-
-        $doc.trigger('fv_player_editor_item_delete');
-
-        return false;
+        );
       });
 
       /*
@@ -1415,6 +1430,10 @@ jQuery(function() {
       }
 
       function error(msg) {
+        debug_log( 'Error processing fv_player_db_save response', msg );
+
+        debug_request_failed( msg );
+
         is_saving = false;
         $el_editor.find('.button-primary').prop('disabled', false);
 
@@ -1431,7 +1450,8 @@ jQuery(function() {
           return;
         }
 
-        var what_is_saving = ajax_save_this_please;
+        var what_is_saving = ajax_save_this_please,
+          what_is_saving_video_items = ajax_data_video_items.get( what_is_saving ) || {};
 
         is_saving = true;
         insert_button_toggle_disabled(true);
@@ -1442,7 +1462,9 @@ jQuery(function() {
 
         ajax_save_this_please = set_control_fields( ajax_save_this_please );
 
-        debug_log('Running fv_player_db_save Ajax.', ajax_save_this_please.update );
+        debug_log('Running fv_player_db_save Ajax.', ajax_save_this_please );
+
+        debug_request_started( 'save', ajax_save_this_please );
 
         let time_start_save = performance.now();
 
@@ -1464,17 +1486,21 @@ jQuery(function() {
 
                 debug_log( 'Fatal error in fv_player_db_save: ' + response.fatal_error );
 
+                debug_request_failed( response.error );
+
                 var json_export_data = jQuery('<div/>').text(JSON.stringify(what_is_saving)).html();
 
                 var overlay = overlay_show('error_saving');
-                overlay.find('textarea').val( response.error + '\n\nJSON data:\n\n' + $('<div/>').text(json_export_data).html() );
+                overlay.find('textarea').val( response.error + '\n\nJSON data:\n\n' + $('<div/>').text(json_export_data).html() + '\n\n' + build_debug_info() );
 
-                jQuery('#fv_player_copy_to_clipboard').select();
+                overlay.find('textarea').trigger('focus');
 
               } else {
                 add_notice( 'error', response.error );
 
                 debug_log( 'Error in fv_player_db_save: ' + response.error );
+
+                debug_request_failed( response.error );
               }
 
               el_spinner.hide();
@@ -1483,6 +1509,8 @@ jQuery(function() {
 
               return;
             }
+
+            debug_request_succeeded();
 
             let time_start_display = performance.now();
 
@@ -1493,12 +1521,31 @@ jQuery(function() {
 
             try {
               $(response.videos).each( function(k,v) {
-                var item = $('.fv-player-playlist-item').eq(k);
-                if( !item.data('id_video') ) {
+                /*
+                 * The playlist item which was saved as video k. Do not look it up by its position
+                 * as videos might have been added, removed or moved while saving.
+                 */
+                var item = what_is_saving_video_items[k] ? $( what_is_saving_video_items[k] ) : $('.fv-player-playlist-item').eq(k);
+
+                // The playlist item was removed while saving
+                if( !item.length || !document.contains( item[0] ) ) {
+                  // The removal did not know the ID of a new video, so delete it with the next save
+                  if( item.length && !item.attr('data-id_video') && v.id ) {
+                    debug_log('Video removed while saving, deleting it: '+v.id);
+                    deleted_videos.push(v.id);
+                    next = true;
+                  }
+                  return;
+                }
+
+                if( !item.attr('data-id_video') ) {
                   item.attr('data-id_video',v.id);
                 }
 
-                if( k == current_video_to_edit ) {
+                // The current position of the playlist item
+                var index = parseInt( item.attr('data-index') );
+
+                if( index == current_video_to_edit ) {
                   debug_log('current_video_db_id after save: '+v.id);
                   current_video_db_id = v.id;
                 }
@@ -1508,8 +1555,8 @@ jQuery(function() {
                 * So we fill that in
                 */
                 // TODO: Populate chapters, error, is_live, is_audio, encryption key
-                var video_tab = get_tab( k, 'video-files' ),
-                  subtitles_tab = get_tab( k, 'subtitles' ),
+                var video_tab = get_tab( index, 'video-files' ),
+                  subtitles_tab = get_tab( index, 'subtitles' ),
                   splash_field = get_field( 'splash', video_tab ),
                   splash_attachment_id_field = get_field( 'splash_attachment_id', video_tab ),
                   title_field = get_field( 'title', video_tab ),
@@ -1563,12 +1610,19 @@ jQuery(function() {
                 }
 
                 // The Ajax save can give us some video details and it detects stream type so we refresh that information here if we are editing that video
-                if( current_video_to_edit == k ) {
+                // These functions take the video details from the save response by the playlist position,
+                // so if the playlist changed while saving, leave it to the next save
+                if( current_video_to_edit == index && index == k ) {
                   show_video_details(k);
                   show_stream_fields_worker(k);
                   show_playlist_not_supported(k);
                 }
               });
+
+              if ( response.trailer_video && response.trailer_video.id ) {
+                let trailer_tab = $( '.fv-player-tab-trailer' );
+                get_field( 'trailer_video_id', trailer_tab ).val( response.trailer_video.id );
+              }
 
               // If we are in playlist view, we refresh the list too
               if( current_video_to_edit == -1 ) {
@@ -1660,6 +1714,8 @@ jQuery(function() {
 
             debug_log( 'HTTP Error in fv_player_db_save: ' + errorThrown + ': ' + jqXHR.responseText );
 
+            debug_request_failed( 'HTTP Error: ' + textStatus + ( errorThrown ? ' ' + errorThrown : '' ), jqXHR );
+
             el_spinner.hide();
 
             is_saving = false;
@@ -1673,7 +1729,7 @@ jQuery(function() {
       editor_init();
 
       var $body = jQuery('body');
-      $body.on('focus', '#fv_player_copy_to_clipboard', function() {
+      $body.on('focus', '[name=fv_player_copy_to_clipboard]', function() {
         this.select();
       });
 
@@ -2146,6 +2202,7 @@ jQuery(function() {
         $tabs                  = $el_editor.find('.fv-player-tab'),
         regex                  = /((fv_wp_flowplayer_field_|fv_wp_flowplayer_hlskey|fv_player_field_ppv_)[^ ]*)/g,
         data                   = {'video_meta' : {}, 'player_meta' : {}},
+        video_items            = {},
         end_of_playlist_action = jQuery('#fv_wp_flowplayer_field_end_actions').val(),
         single_video_showing   = !give_it_all && editing_video_details;
 
@@ -2203,6 +2260,10 @@ jQuery(function() {
             $inputs = ((is_videos_tab || is_subtitles_tab) ? jQuery(this).find('input, select, textarea').not('.no-data') : jQuery(this).not('.no-data') ),
             table_index = jQuery(this).data('index');
           save_index++;
+
+          if (is_videos_tab) {
+            video_items[save_index] = this;
+          }
 
           $inputs.each(function() {
             var
@@ -2319,6 +2380,7 @@ jQuery(function() {
       if (data['videos']) {
         var
           data_videos_new = {},
+          video_items_new = {},
           x = 0;
 
         for (var i in data['videos']) {
@@ -2326,6 +2388,7 @@ jQuery(function() {
             // if we should show preview of a single video only, add that video here,
             // otherwise add all videos here
             if (!single_video_showing || x == current_video_to_edit) {
+              video_items_new[x] = video_items[i];
               data_videos_new[x++] = data['videos'][i];
             } else {
               x++;
@@ -2334,6 +2397,7 @@ jQuery(function() {
         }
 
         data['videos'] = data_videos_new;
+        video_items = video_items_new;
       }
 
       // add player ID and deleted elements for a DB update
@@ -2342,19 +2406,363 @@ jQuery(function() {
       data['deleted_video_meta'] = deleted_video_meta.join(',');
       data['deleted_player_meta'] = deleted_player_meta.join(',');
 
+      ajax_data_video_items.set( data, video_items );
+
       return data;
     }
 
     function debug_log( message, details ) {
-      store_debug_log.push( message );
+      debug_store( message, details );
 
       console.log( 'FV Player Editor: '+message);
       if( details ) {
-        store_debug_log.push( details );
-
         console.log(details);
       }
     }
+
+    /**
+     * Store the debug message without printing it to console. The details are converted to text right away
+     * as the objects might change later.
+     *
+     * @param {string} message
+     * @param {*}      [details]
+     */
+    function debug_store( message, details ) {
+      store_debug_log.push( {
+        time:    performance.now(),
+        message: message,
+        details: details ? debug_stringify( details ) : false
+      } );
+
+      // Keep the log size reasonable, the editor might be opened many times without reloading the page
+      if ( store_debug_log.length > 300 ) {
+        store_debug_log.shift();
+      }
+    }
+
+    /**
+     * Convert anything to text for the debug log. Removes nonces and shortens the output.
+     *
+     * @param {*}   value
+     * @param {int} [limit] Maximum length, default 3000 characters
+     *
+     * @return {string}
+     */
+    function debug_stringify( value, limit ) {
+      let output;
+
+      if ( typeof( value ) == 'string' ) {
+        output = value;
+
+      } else if ( value instanceof Error ) {
+        output = value.stack ? value.stack : value.name + ': ' + value.message;
+
+      } else {
+        try {
+          let seen = [];
+          output = JSON.stringify( value, function( key, val ) {
+            if ( key && key.indexOf( 'nonce' ) != -1 ) {
+              return '[removed]';
+            }
+
+            if ( val && typeof( val ) == 'object' ) {
+              if ( seen.indexOf( val ) != -1 ) {
+                return '[Repeated or circular reference]';
+              }
+              seen.push( val );
+            }
+            return val;
+          } );
+
+        } catch( e ) {
+          output = String( value );
+        }
+      }
+
+      if ( typeof( output ) != 'string' ) {
+        output = String( value );
+      }
+
+      limit = limit || 3000;
+      if ( output.length > limit ) {
+        output = output.substring( 0, limit ) + '... [' + ( output.length - limit ) + ' more characters]';
+      }
+
+      return output;
+    }
+
+    /**
+     * @return {string} The debug log as text with time since page load for each line
+     */
+    function format_debug_log() {
+      return store_debug_log.map( function( entry ) {
+        let line = '[+' + ( entry.time / 1000 ).toFixed( 2 ) + 's] ' + entry.message;
+        if ( entry.details ) {
+          line += '\n    ' + entry.details.replace( /\n/g, '\n    ' );
+        }
+        return line;
+      } ).join( '\n' );
+    }
+
+    /**
+     * Call before starting fv_player_db_save or fv_player_db_load Ajax.
+     * If it does not finish in 10 seconds the Copy debug info notice appears.
+     *
+     * @param {string} kind    'save' or 'load'
+     * @param {object} request The data being sent
+     */
+    function debug_request_started( kind, request ) {
+      clearTimeout( debug_request_timer );
+
+      debug_last_request = {
+        kind:       kind,
+        started:    new Date(),
+        time_start: performance.now(),
+        request:    debug_stringify( request, 20000 ),
+        result:     'pending'
+      };
+
+      debug_request_timer = setTimeout( function() {
+        debug_log( 'The ' + kind + ' Ajax request did not finish in 10 seconds.' );
+        debug_notice_show( kind, 'slow' );
+      }, debug_request_timeout );
+    }
+
+    function debug_request_succeeded() {
+      clearTimeout( debug_request_timer );
+
+      if ( debug_last_request ) {
+        debug_last_request.result = 'ok';
+        debug_last_request.duration = debug_time( debug_last_request.time_start );
+      }
+
+      debug_notice_hide();
+    }
+
+    /**
+     * @param {string} reason  What went wrong
+     * @param {object} [jqXHR] The failed request
+     */
+    function debug_request_failed( reason, jqXHR ) {
+      clearTimeout( debug_request_timer );
+
+      let kind = 'save';
+
+      if ( debug_last_request ) {
+        kind = debug_last_request.kind;
+
+        debug_last_request.result = 'error';
+        debug_last_request.duration = debug_time( debug_last_request.time_start );
+        debug_last_request.error = debug_stringify( reason );
+
+        if ( jqXHR ) {
+          debug_last_request.http_status = jqXHR.status + ( jqXHR.statusText ? ' ' + jqXHR.statusText : '' );
+
+          if ( jqXHR.responseText ) {
+            // DOMParser does not run any scripts or load any images
+            let text = jqXHR.responseText;
+            try {
+              text = new DOMParser().parseFromString( text, 'text/html' ).body.textContent;
+            } catch( e ) {}
+
+            debug_last_request.response = debug_stringify( text.replace( /\s+/g, ' ' ).trim(), 5000 );
+          }
+        }
+      }
+
+      debug_notice_show( kind, 'failed' );
+    }
+
+    function debug_notice_show( kind, reason ) {
+      let notice = $( '#fv-player-editor-debug-notice' );
+
+      notice.find( '.fv-player-editor-debug-notice-message' ).text( notice.data( kind + '-' + reason ) || '' );
+      notice.find( '.fv-player-editor-debug-notice-status' ).text( '' );
+      notice.show();
+    }
+
+    function debug_notice_hide() {
+      $( '#fv-player-editor-debug-notice' ).hide();
+    }
+
+    /**
+     * @return {string} Where is the editor used
+     */
+    function debug_editor_context() {
+      try {
+        if ( is_fv_player_screen( editor_button_clicked ) ) {
+          return 'FV Player screen';
+        }
+
+        if ( window.fv_player_editor && window.fv_player_editor.clientId ) {
+          return 'Block editor';
+        }
+
+        if ( $( editor_button_clicked ).closest( '#elementor-controls' ).length ) {
+          return 'Elementor';
+        }
+
+        if ( widget_id ) {
+          return 'Widget #' + widget_id;
+        }
+
+        if ( instance_code_mirror ) {
+          return 'CodeMirror';
+        }
+
+        if ( instance_fp_wysiwyg ) {
+          return 'Foliopress WYSIWYG';
+        }
+
+        if ( instance_tinymce ) {
+          return 'TinyMCE' + ( typeof( instance_tinymce.isHidden ) == 'function' && instance_tinymce.isHidden() ? ' in Text Mode' : ' in Visual Mode' );
+        }
+
+        if ( fv_player_editor_conf.frontend ) {
+          return 'Front-end';
+        }
+
+        return 'Other' + ( window.pagenow ? ' (' + window.pagenow + ')' : '' );
+
+      } catch( e ) {
+        return 'Unknown (' + e.message + ')';
+      }
+    }
+
+    /**
+     * @return {string} Everything FV Player support needs to know about the editor issue
+     */
+    function build_debug_info() {
+      let versions = fv_player_editor_conf.debug_versions || {},
+        lines = [
+          'FV Player debug info',
+          'Generated: ' + new Date().toISOString(),
+          'Page: ' + location.href,
+          'FV Player ' + ( versions.fv_player || '?' ) + ' | WordPress ' + ( versions.wp || '?' ) + ' | PHP ' + ( versions.php || '?' ),
+          'Browser: ' + navigator.userAgent,
+          'Editor context: ' + debug_editor_context(),
+          'Player ID: ' + current_player_db_id + ' | Video ID: ' + current_video_db_id
+        ];
+
+      if ( debug_last_request ) {
+        let r = debug_last_request;
+
+        lines.push(
+          '',
+          'Last request: ' + r.kind + ', started ' + r.started.toISOString() + ', ' +
+            ( 'pending' == r.result ? 'still pending after ' + debug_time( r.time_start ) : 'took ' + r.duration ) +
+            ', result: ' + r.result +
+            ( r.http_status ? ', HTTP ' + r.http_status : '' )
+        );
+
+        if ( r.error ) {
+          lines.push( 'Error: ' + r.error );
+        }
+
+        if ( r.response ) {
+          lines.push( 'Response: ' + r.response );
+        }
+
+        lines.push( 'Request: ' + r.request );
+      }
+
+      lines.push( '', '--- Log ---', format_debug_log() );
+
+      return lines.join( '\n' );
+    }
+
+    /**
+     * Is the JavaScript error coming from FV Player or its extensions?
+     * Errors of other plugins are only logged, these also show the Copy debug info notice.
+     *
+     * @param {string} filename
+     * @param {string} stack
+     *
+     * @return {bool}
+     */
+    function debug_is_fv_player_error( filename, stack ) {
+      return /fv-player|fv-wordpress-flowplayer/i.test( ( filename || '' ) + ' ' + ( stack || '' ) );
+    }
+
+    function debug_editor_is_open() {
+      return fv_player_editor_conf.frontend || $( '#fv-player-shortcode-editor' ).is( ':visible' );
+    }
+
+    // Uncaught JavaScript errors often break the editor, store them for the debug info
+    window.addEventListener( 'error', function( e ) {
+      if ( !debug_editor_is_open() ) {
+        return;
+      }
+
+      let stack = e.error && e.error.stack ? e.error.stack : false;
+
+      debug_store(
+        'JS error: ' + e.message + ( e.filename ? ' at ' + e.filename + ':' + e.lineno + ':' + e.colno : '' ),
+        stack
+      );
+
+      // The error might prevent the saving from even starting, so show the notice right away
+      if ( debug_is_fv_player_error( e.filename, stack ) ) {
+        debug_notice_show( 'editor', 'error' );
+      }
+    } );
+
+    window.addEventListener( 'unhandledrejection', function( e ) {
+      if ( !debug_editor_is_open() ) {
+        return;
+      }
+
+      let stack = e.reason && e.reason.stack ? e.reason.stack : false;
+
+      debug_store(
+        'Unhandled promise rejection: ' + ( e.reason && e.reason.message ? e.reason.message : String( e.reason ) ),
+        stack
+      );
+
+      if ( debug_is_fv_player_error( '', stack ) ) {
+        debug_notice_show( 'editor', 'error' );
+      }
+    } );
+
+    $doc.on( 'click', '[data-fv-player-editor-debug-copy]', function() {
+      let text = build_debug_info(),
+        status = $( '#fv-player-editor-debug-notice .fv-player-editor-debug-notice-status' );
+
+      // Show the text so that it can be copied by hand
+      function fallback() {
+        let overlay = overlay_show( 'export' ),
+          textarea = overlay.find( '[name=fv_player_copy_to_clipboard]' );
+
+        textarea.val( text );
+        textarea.get( 0 ).focus();
+        textarea.get( 0 ).select();
+
+        status.text( '' );
+      }
+
+      if ( typeof( fv_player_clipboard ) != 'function' ) {
+        fallback();
+        return false;
+      }
+
+      fv_player_clipboard( text, function() {
+        status.text( status.closest( '#fv-player-editor-debug-notice' ).data( 'copied' ) );
+      }, fallback );
+
+      return false;
+    } );
+
+    // Copy To Clipboard button of the Export and Error overlays
+    $doc.on( 'click', '[data-fv-player-editor-export-overlay-copy]', function() {
+      var button = this;
+      fv_player_clipboard( $(button).closest('.fv-player-editor-overlay').find('[name=fv_player_copy_to_clipboard]').val(), function() {
+        fv_player_editor.overlay_notice( button, 'Text Copied To Clipboard!', 'success', 3000 );
+      }, function() {
+        fv_player_editor.overlay_notice( button, '<strong>Error copying text into clipboard!</strong><br />Please copy the content of the above text area manually by using CTRL+C (or CMD+C on MAC).', 'error' );
+      });
+
+      return false;
+    });
 
     function debug_time( time ) {
       return Math.round( 100 * ( performance.now() - time ) / 1000 ) / 100 + ' seconds';
@@ -2372,6 +2780,9 @@ jQuery(function() {
       if ( has_errors() ) {
         return;
       }
+
+      clearTimeout( debug_request_timer );
+      debug_notice_hide();
 
       // remove TinyMCE hidden tags and other similar tags which aids shortcode editing
       // to prevent opening the same player over and over
@@ -2810,14 +3221,17 @@ jQuery(function() {
           // load video data via an AJAX call
           debug_log('Running fv_player_db_load Ajax.');
 
-          let time_start = performance.now();
+          let time_start = performance.now(),
+            load_request = {
+              action : 'fv_player_db_load',
+              nonce : fv_player_editor_conf.db_load_nonce,
+              playerID :  result[1],
+              current_video_to_edit: get_playlist_items_count() > 1 ? current_video_to_edit : -1,
+            };
 
-          fv_player_shortcode_editor_ajax = jQuery.post( ajaxurl + '?fv_player_db_load=' + result[1], {
-            action : 'fv_player_db_load',
-            nonce : fv_player_editor_conf.db_load_nonce,
-            playerID :  result[1],
-            current_video_to_edit: get_playlist_items_count() > 1 ? current_video_to_edit : -1,
-          }, function(response) {
+          debug_request_started( 'load', load_request );
+
+          fv_player_shortcode_editor_ajax = jQuery.post( ajaxurl + '?fv_player_db_load=' + result[1], load_request, function(response) {
             var vids = response['videos'];
 
             debug_log('Finished fv_player_db_load Ajax in ' + debug_time( time_start ) + '.',response);
@@ -2830,11 +3244,15 @@ It seems the player #" + result[1] + " which you are about to edit is a duplicat
 Any changes made to the videos will update the other player as well. \
 You can also carefully remove the duplicate player by checking which one is actually used in your post.\n\n\
 Please also contact FV Player support with the following debug information:\n\n\
-" + store_debug_log.join("\n")
+" + format_debug_log()
                 );
               }
 
               if( response.error ) {
+                debug_log( 'Error in fv_player_db_load: ' + response.error );
+
+                debug_request_failed( response.error );
+
                 reset_editor_ids();
 
                 overlay_show('message', response.error );
@@ -2868,7 +3286,15 @@ Please also contact FV Player support with the following debug information:\n\n\
 
               for (var key in response) {
                 // put the field value where it belongs
-                if (key !== 'videos') {
+                if ( 'trailer_video' === key ) {
+                  let trailer_tab = $( '.fv-player-tab-trailer' );
+                  get_field( 'trailer_video_id', trailer_tab ).val( response[ key ].id );
+                  get_field( 'trailer_src', trailer_tab ).val( response[ key ].src );
+                  get_field( 'trailer_src1', trailer_tab ).val( response[ key ].src1 );
+                  get_field( 'trailer_src2', trailer_tab ).val( response[ key ].src2 );
+                  get_field( 'trailer_toggle_advanced_settings', trailer_tab ).prop( 'checked', response[ key ].toggle_advanced_settings).trigger( 'change' );
+
+                } else if (key !== 'videos') {
                   // in case of meta data, proceed with each player meta one by one
                   if (key == 'meta') {
                     for ( let i in response[key]) {
@@ -2995,11 +3421,20 @@ Please also contact FV Player support with the following debug information:\n\n\
               copy_player_button_toggle(false);
             }
 
+            debug_request_succeeded();
+
             $doc.trigger('fv_player_editor_player_loaded');
 
             $doc.trigger('fv_player_editor_finished');
 
           }).fail( function( jqXHR, textStatus, errorThrown ) {
+            debug_log( 'HTTP Error in fv_player_db_load: ' + errorThrown );
+
+            // Do not report the request aborted when the editor closes
+            if ( 'abort' != textStatus ) {
+              debug_request_failed( 'HTTP Error: ' + textStatus + ( errorThrown ? ' ' + errorThrown : '' ), jqXHR );
+            }
+
             if ( jqXHR.status == 404 ) {
               overlay_show('message', 'The requested player #' + result[1] + ' could not be found.');
             } else {
@@ -3437,6 +3872,8 @@ Please also contact FV Player support with the following debug information:\n\n\
 
       ajax_data = set_control_fields( ajax_data );
 
+      debug_request_started( 'save', ajax_data );
+
       let time_start = performance.now();
       
       // save data
@@ -3459,17 +3896,21 @@ Please also contact FV Player support with the following debug information:\n\n\
 
               debug_log( 'Fatal error in fv_player_db_save: ' + response.fatal_error );
 
+              debug_request_failed( response.error );
+
               let json_export_data = jQuery('<div/>').text(JSON.stringify(ajax_data)).html();
 
               let overlay = overlay_show('error_saving');
-              overlay.find('textarea').val( response.error + '\n\nJSON data:\n\n' + $('<div/>').text(json_export_data).html() );
+              overlay.find('textarea').val( response.error + '\n\nJSON data:\n\n' + $('<div/>').text(json_export_data).html() + '\n\n' + build_debug_info() );
 
-              jQuery('#fv_player_copy_to_clipboard').select();
+              overlay.find('textarea').trigger('focus');
 
             } else {
               add_notice( 'error', response.error );
 
               debug_log( 'Error in fv_player_db_save: ' + response.error );
+
+              debug_request_failed( response.error );
             }
 
             el_spinner.hide();
@@ -3484,6 +3925,8 @@ Please also contact FV Player support with the following debug information:\n\n\
 
           current_player_db_id = parseInt(response.id);
           if( current_player_db_id > 0 ) {
+            debug_request_succeeded();
+
             let shortcode_insert = '[fvplayer id="' + current_player_db_id + '"';
 
             // we have extra presentation parameters to keep
@@ -3522,18 +3965,24 @@ Please also contact FV Player support with the following debug information:\n\n\
             jQuery(".fv-wordpress-flowplayer-button").fv_player_box.close();
 
           } else {
+            debug_log( 'No player ID after fv_player_db_save.', response );
+
+            debug_request_failed( 'No player ID after save' );
+
             let json_export_data = jQuery('<div/>').text(JSON.stringify(ajax_data)).html();
 
             let overlay = overlay_show('error_saving');
-            overlay.find('textarea').val( $('<div/>').text(json_export_data).html() );
+            overlay.find('textarea').val( $('<div/>').text(json_export_data).html() + '\n\n' + build_debug_info() );
 
-            jQuery('#fv_player_copy_to_clipboard').select();
+            overlay.find('textarea').trigger('focus');
           }
         },
         error: function( jqXHR, textStatus, errorThrown ) {
           overlay_show('message', 'An unexpected error has occurred while saving player: <code>' + errorThrown + '</code><br /><br />Please try again');
 
           debug_log( 'HTTP Error in fv_player_db_save: ' + errorThrown + ': ' + jqXHR.responseText );
+
+          debug_request_failed( 'HTTP Error: ' + textStatus + ( errorThrown ? ' ' + errorThrown : '' ), jqXHR );
         }
       });
 
@@ -5108,6 +5557,11 @@ Please also contact FV Player support with the following debug information:\n\n\
       get_current_player_db_id,
 
       get_current_player_object,
+
+      // Text for FV Player support, also available with the Copy debug info button
+      get_debug_info() {
+        return build_debug_info();
+      },
 
       get_current_video_meta,
 

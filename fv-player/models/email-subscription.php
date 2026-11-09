@@ -521,6 +521,23 @@ class FV_Player_Email_Subscription {
   }
 
   /**
+   * Get the error title from the serialized error log stored in the fv_player_emails table.
+   *
+   * @param string $error Serialized error log array.
+   * @return string Error title.
+   */
+  public function get_error_title( $error ) {
+    // Only arrays are ever stored here, never unserialize objects
+    $tmp = is_string( $error ) ? @unserialize( $error, array( 'allowed_classes' => false ) ) : false;
+
+    if( is_array( $tmp ) && isset( $tmp['title'] ) && is_scalar( $tmp['title'] ) ) {
+      return (string) $tmp['title'];
+    }
+
+    return '';
+  }
+
+  /**
    * Escape a CSV cell value to prevent formula injection in spreadsheet apps.
    *
    * @param string $value Field value.
@@ -660,8 +677,7 @@ class FV_Player_Email_Subscription {
           unset($row->integration_nice);
 
           if(!empty($row->error)){
-            $tmp = unserialize($row->error);
-            $row->error =  $tmp['title'];
+            $row->error = $this->get_error_title( $row->error );
           }
 
 
@@ -712,8 +728,7 @@ class FV_Player_Email_Subscription {
           }elseif($key === 'error'){
             $item = '';
             if( !empty($item) ) {
-              $tmp = unserialize($item);
-              $item = $tmp['title'];
+              $item = $this->get_error_title( $item );
             }
           }
           echo '<td>' . wp_strip_all_tags( $item ) . '</td>';
@@ -759,7 +774,8 @@ class FV_Player_Email_Subscription {
   public function popup_preview( $aAttributes ) {
     global $fv_fp;
     $aArgs = func_get_args();
-    if( isset($aArgs[2]->aCurArgs['end_popup_preview']) && $aArgs[2]->aCurArgs['end_popup_preview'] ) {
+    // Only used for the popup preview in plugin settings, so it must not be usable by anybody else to show the popup on page load
+    if( isset($aArgs[2]->aCurArgs['end_popup_preview']) && $aArgs[2]->aCurArgs['end_popup_preview'] && current_user_can( 'manage_options' ) ) {
       $aAttributes['data-end_popup_preview'] = true;
     }
     return $aAttributes;

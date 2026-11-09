@@ -711,6 +711,9 @@ function fv_player_comment_text( $comment_text ) {
     add_filter( 'bbp_get_topic_content', 'do_shortcode', 11 );
     add_filter( 'bbp_get_reply_content', 'do_shortcode', 11 );
 
+    // The shortcode attributes allowed in this content are restricted in
+    // flowplayer_content_handle(), see FV_Player_Sanitize_User_Input()->is_untrusted_content().
+
     $comment_text = fv_player_comment_text_replace_video_urls_outside_html_tags( $comment_text );
   }
 
